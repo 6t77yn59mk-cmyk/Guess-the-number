@@ -499,6 +499,7 @@ button { font: inherit; }
 /* ---------- Quick chat & emotes (online) ---------- */
 .chat-btn { display: none; }
 #app[data-mode="online"] .chat-btn { display: flex; }
+#app.no-chat .chat-btn { display: none; }   /* CrazyGames turned chat off */
 
 /* White Roblox-style chat bubble above the head */
 .oh-chat {

@@ -190,7 +190,7 @@ def is_rude(name):
 
 
 def clean_name(raw):
-    name = "".join(ch for ch in str(raw or "") if ch.isprintable()).strip()[:16]
+    name = "".join(ch for ch in str(raw or "") if ch.isprintable()).strip()[:20]   # CrazyGames usernames are up to 20
     if not name or is_rude(name):
         return f"Guest {random.randint(100, 999)}"
     return name

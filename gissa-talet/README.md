@@ -71,19 +71,34 @@ name (`Guest 123`).
 ## Publish on CrazyGames
 
 CrazyGames only hosts the game's files, so ONLINE and PARTY use the server on
-Render (see above) – deploy that first. Then build the zip to upload, with your
+Render (see above) – deploy that first. Then build the files to upload, with your
 server's address:
 
 ```bash
 py -3 build_crazygames.py https://your-game.onrender.com
 ```
 
-This makes `dist/guess-the-number-crazygames.zip` (index.html, style.css and js/,
-with the address filled in to `js/config.js`). In the CrazyGames developer portal,
-upload the zip, write a description and the controls (mouse / touch), and add the
+This makes the folder `dist/guess-the-number/` (index.html, style.css and js/, with
+the address filled in to `js/config.js` and the CrazyGames SDK added to index.html).
+In the CrazyGames developer portal, upload that folder's contents (they don't accept
+zip files), write a description and the controls (mouse / touch), and add the
 covers: 1920×1080, 800×1200 and 800×800 images (only the game's title as text) and
-a 15–20 s silent preview video in both 16:9 and 2:3, 1080p. On CrazyGames the
-party room shows only the code (no invite link).
+a 15–20 s silent preview video in both 16:9 and 2:3, 1080p.
+
+On CrazyGames the game uses the SDK (`js/crazygames.js`) for:
+
+- **Usernames** – a logged-in player's CrazyGames name is used (and can't be changed).
+- **Invites** – a party room shows CrazyGames' invite link, the room is shown as
+  joinable until the game starts, and a friend who opens the link (or clicks Join)
+  goes straight into the room.
+- **Instant multiplayer** – when CrazyGames asks for it, a party room opens right away.
+- **Chat and sound settings** – CrazyGames can turn off the chat and mute the sound.
+- **Gameplay start / stop and happytime** (when you win an online match).
+
+To test it locally, run the built folder on localhost (e.g.
+`py -3 -m http.server 8091 --directory dist/guess-the-number`); the SDK then runs in
+test mode. Add `?instantJoin=true`, `?disableChat=true&muteAudio=true` or
+`?czy_invite=true&room=CODE` to the address to try those parts.
 
 ## Files
 
@@ -95,5 +110,7 @@ party room shows only the code (no invite link).
 | `js/scene3d.js` | The 3D classroom, the students and their animations |
 | `js/net.js` | WebSocket connection to the server |
 | `js/config.js` | Where the game server is (empty = the same address as the game) |
-| `build_crazygames.py` | Makes the zip to upload to CrazyGames |
+| `js/crazygames.js` | CrazyGames SDK: usernames, invites, chat/sound settings (off outside CrazyGames) |
+| `build_crazygames.py` | Makes the folder to upload to CrazyGames |
+| `covers/` | Cover images for CrazyGames (1920×1080, 800×1200, 800×800) |
 | `server.py` | Serves the files and runs ONLINE / PARTY. It keeps the secret numbers and decides Higher / Lower, so players can't cheat |

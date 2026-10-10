@@ -1,6 +1,7 @@
 import { createScene, PANEL_SLIDE_MS, panelEaseCss } from './scene3d.js';
 import { createConnection } from './net.js';
 import { GAME_SERVER } from './config.js';
+import { crazy, initCrazyGames } from './crazygames.js';
 
 // ================= Settings =================
 const SETTING_OPTIONS = {
@@ -40,6 +41,8 @@ function loadSettings() {
 function saveSettings() {
   try { localStorage.setItem('gissa-talet-settings', JSON.stringify(settings)); } catch { /* no storage */ }
 }
+
+let crazyName = null;   // the player's CrazyGames username (when logged in there)
 
 function loadName() {
   let name = '';
@@ -329,6 +332,9 @@ function viewer() {
 
 // ================= Sound (simple beeps) =================
 const audio = { ctx: null };
+// CrazyGames can turn the sound off for the whole site (its setting wins over ours)
+let crazyMuted = false;
+const soundOn = () => settings.sound && !crazyMuted;
 
 // The sound system. Creating it can freeze the page for a moment (about 0.7 s on some PCs),
 // so it's made while the loading screen is still up instead of in the middle of the first
@@ -340,7 +346,7 @@ function soundCtx() {
 }
 
 function tone(seq, type = 'square', vol = 0.06) {
-  if (!settings.sound) return;
+  if (!soundOn()) return;
   try {
     const ctx = soundCtx();
     let t = ctx.currentTime;
@@ -697,8 +703,8 @@ function renderHud() {
   ui.reward.hidden = !(over && state.reward > 0);
   ui.rewardText.textContent = `+${state.reward}`;
   ui.listBtn.setAttribute('aria-pressed', String(pickerOpen));
-  ui.soundBtn.dataset.on = String(settings.sound);
-  ui.soundBtn.setAttribute('aria-pressed', String(settings.sound));
+  ui.soundBtn.dataset.on = String(soundOn());
+  ui.soundBtn.setAttribute('aria-pressed', String(soundOn()));
 }
 
 function renderWorld() {
@@ -727,7 +733,11 @@ function render() {
 
 // ================= Home screen =================
 function showMenu() {
-  if (state.mode === 'online') net.send({ t: 'leave' });
+  if (state.mode === 'online') {
+    net.send({ t: 'leave' });
+    crazy.leftRoom();
+  }
+  crazy.gameplayStop();
   state.net.expecting = false;
   state.round++;
   state.screen = 'menu';
@@ -779,6 +789,7 @@ function enterGame(mode) {
 // PHASE 1: both pick a secret number
 function newGame() {
   state.round++;
+  crazy.gameplayStart();
   const max = state.mode === 'online' ? state.net.max : settings.max;
   if (max !== MAX) {
     MAX = max;
@@ -947,6 +958,8 @@ async function resolveGuess(side, n, token) {
 }
 
 function endGame(winner) {
+  crazy.gameplayStop();
+  if (isVersus() && winner === 'player') crazy.happytime();
   Object.assign(state, {
     phase: 'over',
     busy: false,
@@ -1007,7 +1020,7 @@ function finisherFor(side) {
 
 // A rising or falling tone (for the finisher sound effects)
 function sweep(from, to, dur, type = 'sine', vol = 0.08, delay = 0) {
-  if (!settings.sound) return;
+  if (!soundOn()) return;
   try {
     const ctx = soundCtx();
     const t = ctx.currentTime + delay;
@@ -1026,7 +1039,7 @@ function sweep(from, to, dur, type = 'sine', vol = 0.08, delay = 0) {
 
 // A burst of filtered noise (pop, crackle, hiss, thunder, boom)
 function noise(dur, vol = 0.1, delay = 0, freq = 1000, filter = 'lowpass') {
-  if (!settings.sound) return;
+  if (!soundOn()) return;
   try {
     const ctx = soundCtx();
     if (!audio.noise) {
@@ -1205,6 +1218,7 @@ function startOnlineGame(msg) {
     max: msg.max,
     code: msg.code,
   });
+  if (msg.code) crazy.roomFull(msg.code);   // both players are in: nobody else can join
   enterGame('online');
   state.net.deadline = performance.now() + msg.time * 1000;
   renderTimer();
@@ -1229,6 +1243,8 @@ function opponentGone(text) {
   if (state.mode !== 'online' || state.screen !== 'game' || state.net.oppLeft) return;
   state.round++;
   state.net.oppLeft = true;
+  crazy.leftRoom();
+  crazy.gameplayStop();
   state.net.leftText = text;
   toggleChat(false);
   world.setView('game');
@@ -1278,6 +1294,7 @@ function sendChat(kind, id) {
 
 function showChat(side, kind, id) {
   if (side === 'bot' && chatMuted) return;
+  if (ui.app.classList.contains('no-chat')) return;   // CrazyGames turned chat off
   const label = labels[side];
   if (kind === 'phrase' && CHAT_PHRASES[id]) {
     label.chat.textContent = CHAT_PHRASES[id];
@@ -1320,7 +1337,8 @@ function openLobby(mode) {
   closeModals();
   ui.lobby.dataset.mode = mode;
   ui.lobbyTitle.textContent = mode === 'online' ? '🌐 Online' : '🎉 Party';
-  ui.nameInput.value = loadName();
+  ui.nameInput.value = crazyName || loadName();
+  ui.nameInput.readOnly = Boolean(crazyName);   // on CrazyGames you play under your username
   setLobbyView(mode);
   ui.lobbyModal.hidden = false;
   SFX.click();
@@ -1338,7 +1356,8 @@ function lobbyError(text) {
 }
 
 function lobbyName() {
-  const name = ui.nameInput.value.trim().slice(0, 16) || loadName();
+  if (crazyName) return crazyName;
+  const name = ui.nameInput.value.trim().slice(0, 20) || loadName();
   ui.nameInput.value = name;
   saveName(name);
   return name;
@@ -1402,12 +1421,20 @@ function showRoom(msg) {
   // When the game is played from another site than the server (CrazyGames) a link to the server
   // wouldn't open the game, so friends use the code only
   ui.inviteLink.hidden = ui.copyBtn.hidden = Boolean(GAME_SERVER);
+  // On CrazyGames: their own invite link, and their Join/Invite buttons get to know the room
+  const crazyLink = crazy.inviteLink(msg.code);
+  if (crazyLink) {
+    ui.inviteLink.textContent = crazyLink;
+    ui.inviteLink.hidden = ui.copyBtn.hidden = false;
+  }
+  crazy.roomOpen(msg.code);
   setLobbyView('room');
   SFX.pop();
 }
 
 function cancelLobby() {
   if (state.net.expecting) net.send({ t: 'cancel' });
+  crazy.leftRoom();
   state.net.expecting = false;
   setLobbyView(ui.lobby.dataset.mode);
   SFX.click();
@@ -1593,6 +1620,7 @@ function openModal(modal) {
 function closeModals({ keepRoom = false } = {}) {
   if (!ui.lobbyModal.hidden && !keepRoom && state.net.expecting) {
     net.send({ t: 'cancel' });
+    crazy.leftRoom();
     state.net.expecting = false;
   }
   if (!ui.shopModal.hidden) closeShop();
@@ -1738,10 +1766,51 @@ for (const type of ['pointerdown', 'touchend', 'click', 'keydown']) {   // iPhon
 window.__gameReady = true;
 ui.loading.classList.add('done');
 
-// An invite link (?room=CODE) opens the party lobby with the code filled in
-const invite = new URLSearchParams(location.search).get('room');
-if (invite && /^[A-Za-z0-9]{4}$/.test(invite)) {
-  ui.codeInput.value = invite.toUpperCase();
-  history.replaceState(null, '', location.pathname);
+// ----- CrazyGames -----
+// Their settings for chat and sound win over the game's own
+function applyCrazySettings() {
+  const { disableChat, muteAudio } = crazy.settings();
+  crazyMuted = Boolean(muteAudio);
+  ui.app.classList.toggle('no-chat', Boolean(disableChat));
+  if (disableChat) toggleChat(false);
+  renderHud();
+}
+
+// A CrazyGames invite link, or "Join" on a friend, goes straight into that party room
+function joinFromInvite(code) {
+  if (!code || !/^[A-Za-z0-9]{4}$/.test(code)) return;
+  if (state.screen === 'game') showMenu();
+  ui.codeInput.value = code.toUpperCase();
   openLobby('party');
+  joinRoom();
+}
+
+initCrazyGames().then(async active => {
+  if (!active) {
+    openUrlInvite();
+    return;
+  }
+  crazyName = await crazy.username();
+  applyCrazySettings();
+  crazy.onSettings(applyCrazySettings);
+  crazy.onJoinRoom(joinFromInvite);
+  const invited = crazy.invitedRoom();
+  if (invited) {
+    joinFromInvite(invited);
+  } else if (crazy.isInstantMultiplayer()) {
+    // Started from "play with friends" on CrazyGames: straight into a new private party room
+    openLobby('party');
+    createRoom();
+  }
+});
+
+// Our own invite link (?room=CODE) opens the party lobby with the code filled in. (On
+// CrazyGames their SDK reads the invite instead, so this waits until we know it isn't there.)
+function openUrlInvite() {
+  const invite = new URLSearchParams(location.search).get('room');
+  if (invite && /^[A-Za-z0-9]{4}$/.test(invite)) {
+    ui.codeInput.value = invite.toUpperCase();
+    history.replaceState(null, '', location.pathname);
+    openLobby('party');
+  }
 }
